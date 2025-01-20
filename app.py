@@ -1,15 +1,14 @@
 import streamlit as st
 import replicate
 import os
+from dotenv import load_dotenv
 
-# Directly set the API token here
-API_TOKEN = "your_actual_api_token_here"  # Replace with your API token
-os.environ['REPLICATE_API_TOKEN'] = API_TOKEN
+# Load environment variables
+load_dotenv()
 
 # App title and description
 st.set_page_config(page_title="DxVar: Genomic Analysis Assistant")
 st.title("DxVar")
-st.write("Powered by Llama-3 and Replicate API")
 
 # Hide Streamlit branding
 hide_streamlit_style = """
@@ -21,9 +20,11 @@ hide_streamlit_style = """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # Ensure API token is available
+API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 if not API_TOKEN:
     st.error("API token not found! Please set `REPLICATE_API_TOKEN` in your environment.")
     st.stop()
+os.environ['REPLICATE_API_TOKEN'] = API_TOKEN
 
 # Model configuration
 MODEL_NAME = "meta/meta-llama-3-70b-instruct"  # Llama model via Replicate API
