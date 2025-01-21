@@ -1,6 +1,8 @@
 import streamlit as st
 import replicate
 import os
+import requests
+import json
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -76,8 +78,25 @@ def generate_response(user_input):
     except Exception as e:
         return f"Error: {str(e)}"
 
+# Function to query genomic variant API
+def query_variant_api(variant_input):
+    url = "https://api.genebe.net/cloud/api-public/v1/variant"
+    headers = {"Accept": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, params=variant_input)
+        if response.status_code == 200:
+            data = response.json()
+            if "variants" in data and len(data["variants"]) > 0:
+                return data["variants"][0]
+            else:
+                return {"error": "No variant information found."}
+        else:
+            return {"error": f"Error {response.status_code}: {response.text}"}
+    except Exception as e:
+        return {"error": str(e)}
+
 # Handle user input
-if user_input := st.chat_input("Enter genetic variant information (e.g., chr1:12345(A>T)) and any query about it..."):
+if user_input := st.chat_input("Enter genetic variant information (e.g., chr1:12345(A>T) and related details):"):
     st.session_state["messages"].append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
@@ -87,6 +106,18 @@ if user_input := st.chat_input("Enter genetic variant information (e.g., chr1:12
             response = generate_response(user_input)
             st.write(response)
             st.session_state["messages"].append({"role": "assistant", "content": response})
+
+# Variant query section
+st.sidebar.header("Genomic Variant Query")
+variant_input = st.sidebar.text_input("Enter variant details (e.g., chr=1, pos=12345, ref=A, alt=T, genome=hg38):", "")
+if st.sidebar.button("Query Variant"):
+    try:
+        # Parse the input into a dictionary
+        variant_dict = dict(item.split("=") for item in variant_input.split(",") if "=" in item)
+        result = query_variant_api(variant_dict)
+        st.sidebar.json(result)
+    except Exception as e:
+        st.sidebar.error(f"Invalid input format: {str(e)}")
 
 # Clear chat history button
 if st.sidebar.button("Clear Chat History"):
