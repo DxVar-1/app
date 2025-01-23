@@ -2,7 +2,7 @@ import streamlit as st
 import replicate
 import os
 import requests
-import json
+import pandas as pd
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -37,19 +37,10 @@ MAX_TOKENS = 1000
 # System prompt for the assistant
 SYSTEM_PROMPT = (
     "You are a clinician assistant chatbot specializing in genomic research and variant analysis. "
-    "Your task is to interpret user-provided genetic variant data, identify possible Mendelian diseases, and provide concise responses."
+    "Your task is to interpret user-provided genetic variant data, identify possible Mendelian diseases, and provide concise responses. "
+    "If the user enters variants, respond in CSV format: chromosome,position,ref base,alt base,genome. "
+    "For example: chr6:160585140-T>G should be 6,160585140,T,G,hg38."
 )
-
-# Store chat history in session state
-if "messages" not in st.session_state:
-    st.session_state["messages"] = [
-        {"role": "assistant", "content": "Welcome to DxVar! How can I assist you with genomic research and variant analysis?"}
-    ]
-
-# Display chat history
-for message in st.session_state["messages"]:
-    with st.chat_message(message["role"]):
-        st.write(message["content"])
 
 # Function to generate response using Replicate API
 def generate_response(user_input):
@@ -71,7 +62,6 @@ def generate_response(user_input):
             },
         )
 
-        # Process the output
         if isinstance(output, list):
             return "".join(output).strip()
         return output or "No response generated."
@@ -96,7 +86,17 @@ def query_variant_api(variant_input):
         return {"error": str(e)}
 
 # Handle user input
-if user_input := st.chat_input("Enter genetic variant information (e.g., chr1:12345(A>T) and related details):"):
+if "messages" not in st.session_state:
+    st.session_state["messages"] = [
+        {"role": "assistant", "content": "Welcome to DxVar! How can I assist you with genomic research and variant analysis?"}
+    ]
+
+# Display chat history
+for message in st.session_state["messages"]:
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
+
+if user_input := st.chat_input("Enter genetic variant information (e.g., chr1:12345(A>T)):"):
     st.session_state["messages"].append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.write(user_input)
@@ -107,19 +107,60 @@ if user_input := st.chat_input("Enter genetic variant information (e.g., chr1:12
             st.write(response)
             st.session_state["messages"].append({"role": "assistant", "content": response})
 
-# Variant query section
+            # Parse variant information
+            try:
+                parts = response.split(",")
+                if len(parts) == 5:
+                    variant_input = {
+                        "chr": parts[0],
+                        "pos": parts[1],
+                        "ref": parts[2],
+                        "alt": parts[3],
+                        "genome": parts[4]
+                    }
+
+                    # Query GeneBe API
+                    variant_result = query_variant_api(variant_input)
+
+                    if "error" in variant_result:
+                        st.error(variant_result["error"])
+                    else:
+                        st.write("### GeneBe API Results")
+                        st.json(variant_result)
+
+                        # Display additional results if available
+                        acmg_classification = variant_result.get("acmg_classification", "Not Available")
+                        effect = variant_result.get("effect", "Not Available")
+                        gene_symbol = variant_result.get("gene_symbol", "Not Available")
+                        hgnc_id = variant_result.get("gene_hgnc_id", "Not Available")
+
+                        st.write("### ACMG Classification")
+                        st.write(f"ACMG Classification: {acmg_classification}")
+                        st.write(f"Effect: {effect}")
+                        st.write(f"Gene Symbol: {gene_symbol}")
+                        st.write(f"HGNC ID: {hgnc_id}")
+
+                        # Add AI follow-up
+                        follow_up_query = f"Tell me about possible Mendelian diseases linked to {gene_symbol} ({hgnc_id})."
+                        follow_up_response = generate_response(follow_up_query)
+
+                        st.write("### Follow-up Analysis")
+                        st.write(follow_up_response)
+
+            except Exception as e:
+                st.error(f"Error parsing response: {str(e)}")
+
+# Sidebar functionality
 st.sidebar.header("Genomic Variant Query")
 variant_input = st.sidebar.text_input("Enter variant details (e.g., chr=1, pos=12345, ref=A, alt=T, genome=hg38):", "")
 if st.sidebar.button("Query Variant"):
     try:
-        # Parse the input into a dictionary
         variant_dict = dict(item.split("=") for item in variant_input.split(",") if "=" in item)
         result = query_variant_api(variant_dict)
         st.sidebar.json(result)
     except Exception as e:
         st.sidebar.error(f"Invalid input format: {str(e)}")
 
-# Clear chat history button
 if st.sidebar.button("Clear Chat History"):
     st.session_state["messages"] = [
         {"role": "assistant", "content": "Welcome to DxVar! How can I assist you with genomic research and variant analysis?"}
