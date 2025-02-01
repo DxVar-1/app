@@ -28,15 +28,8 @@ st.markdown("""
 
 st.title("DxVar")
 
-# Load API Key from secrets or environment variable
-API_KEY = st.secrets.get("GROQ_API_KEY", None)
-
-if API_KEY is None:
-    st.error("GROQ API Key is missing! Please add it to Streamlit secrets or set it in your environment.")
-    st.stop()
-
-# Initialize Groq Client
-client = Groq(api_key=API_KEY)
+# Initialize Groq API client
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 if "GeneBe_results" not in st.session_state:
     st.session_state.GeneBe_results = ['-','-','-','-','-','-','-','-']
@@ -65,6 +58,9 @@ initial_messages = [
             "The user can enter the variant in any format, but it should be the variant alone with no follow-up questions."
             "If the user enters an rs value simply return the rs value, example:"
             "User input: tell me about rs1234. You respond: rs1234"
+            "if both rs and chromosome,position,ref base,alt base are given, give priority to the chromosome, position,ref base,alt base"
+            "and only return that, however if any info is missing from chromosome,position,ref base,alt base, just use rs value and return rs"
+            "Example: rs124234 chromosome:3, pos:13423. You reply: rs124234. since the ref base and alt base are missing"
         ),
     }
 ]
