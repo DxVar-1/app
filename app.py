@@ -42,6 +42,10 @@ if "variant_parts" not in st.session_state:
     st.session_state.variant_parts = None
 if "assistant_response" not in st.session_state:
     st.session_state.assistant_response = ""
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "last_input" not in st.session_state:
+    st.session_state.last_input = ""
 
 # Define the initial system message
 initial_messages = [
@@ -213,21 +217,10 @@ def get_variant_info(message):
         st.write(f"Error while parsing variant: {e}")
         return []
 
-# Main Streamlit interaction loop
-
-if "last_input" not in st.session_state:
-    st.session_state.last_input = ""
-    
-user_input = st.text_input("Enter a genetic variant (ex: chr6:160585140-T>G)")
-
-# If a new input is entered, process it
-if user_input != st.session_state.last_input:
-    st.session_state.last_input = user_input
-    assistant_response = get_assistant_response_initial(user_input)
-    st.session_state.assistant_response = assistant_response  # store for later use
-    st.write(f"Assistant: {assistant_response}")
-    
-    # --- SNP Branch: Extra Step if input starts with 'rs' ---
+# ---------------------------
+# Process input regardless of whether it changed
+if user_input:
+    # If the input starts with 'rs', run the SNP branch.
     if user_input.lower().startswith("rs"):
         snp_id = user_input.split()[0]  # e.g., rs121913514
         variant_info = fetch_variant_info(snp_id)
@@ -237,24 +230,25 @@ if user_input != st.session_state.last_input:
                 st.success(f"Found alleles for {snp_id}: {', '.join(alleles)}")
                 selected_allele = st.selectbox("Select an allele:", alleles)
                 if st.button("Proceed with Variant Interpretation"):
-                    # Build variant parts in expected format
                     st.session_state.variant_parts = [variant_info["chr"], variant_info["pos"], variant_info["ref"], selected_allele, "hg38"]
                     st.session_state.flag = True
                     with st.chat_message("assistant"):
                         st.write(f"Interpreting variant {snp_id} with allele {selected_allele}...")
-                    st.session_state.messages = st.session_state.get("messages", [])
                     st.session_state.messages.append({"role": "assistant", "content": f"Interpreting {snp_id} with allele {selected_allele}..."})
     else:
-        # For non-SNP input, parse the CSV response from the assistant
-        parts = get_variant_info(assistant_response)
-        if parts:
-            st.session_state.variant_parts = parts
-            st.session_state.flag = True
+        # For non-SNP input, only process when the input changes.
+        if user_input != st.session_state.last_input:
+            st.session_state.last_input = user_input
+            assistant_response = get_assistant_response_initial(user_input)
+            st.session_state.assistant_response = assistant_response
+            st.write(f"Assistant: {assistant_response}")
+            parts = get_variant_info(assistant_response)
+            if parts:
+                st.session_state.variant_parts = parts
+                st.session_state.flag = True
 
-# -----------------------------
-# Regardless of whether the input is new or not,
-# if a valid variant has been set (i.e. st.session_state.flag is True)
-# then perform the API calls and display results.
+# ---------------------------
+# If a valid variant is set (either from SNP or normal input), perform API calls.
 if st.session_state.flag and st.session_state.variant_parts:
     parts = st.session_state.variant_parts
     # GENEBE API call
@@ -322,7 +316,9 @@ if st.session_state.flag and st.session_state.variant_parts:
     st.write("### ClinGen Gene-Disease Results")
     find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:' + str(st.session_state.GeneBe_results[3]))
     
-    user_input_1 = f"The following diseases were found to be linked to the gene in interest: {st.session_state.disease_classification_dict}. Explain these diseases in depth, announce if a disease has been refuted, no need to explain that disease.if no diseases found reply with: No linked diseases found"
+    user_input_1 = (f"The following diseases were found to be linked to the gene in interest: "
+                    f"{st.session_state.disease_classification_dict}. Explain these diseases in depth, announce if a disease "
+                    f"has been refuted, no need to explain that disease. If no diseases found reply with: No linked diseases found")
     st.session_state.reply = get_assistant_response_1(user_input_1)
     st.markdown(
         f"""
@@ -334,9 +330,6 @@ if st.session_state.flag and st.session_state.variant_parts:
     )
 
 # FINAL CHATBOT
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
-    
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
         st.write(message["content"])
