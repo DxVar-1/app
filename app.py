@@ -3,71 +3,42 @@ import streamlit as st
 import requests
 from groq import Groq
 import pandas as pd
+from bs4 import BeautifulSoup
 
-# Set up Streamlit UI
 st.set_page_config(page_title="DxVar", layout="centered")
-
 st.title("DxVar")
 
-# Load API key from Streamlit secrets
+# Load API Key from Streamlit Secrets
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# Function to fetch SNP information (alleles, chromosome, position) from Ensembl API
-def fetch_snp_info(rs_id):
-    """
-    Fetches SNP allele information from Ensembl REST API.
-    Returns: (chromosome, position, ref_allele, alt_allele, genome_build)
-    """
-    url = f"https://rest.ensembl.org/variation/human/{rs_id}?content-type=application/json"
+# Function to fetch SNP details (chromosome, position, allele options) from NCBI
+def fetch_snp_info(snp_id):
+    url = f"https://www.ncbi.nlm.nih.gov/snp/{snp_id}"
     response = requests.get(url)
-    
+
     if response.status_code == 200:
-        data = response.json()
-        if "mappings" in data and len(data["mappings"]) > 0:
-            mapping = data["mappings"][0]  # Take first mapping result
-            chrom = mapping["location"].split(":")[0]
-            pos = mapping["location"].split(":")[1]
-            alleles = mapping.get("allele_string", "N/A").split("/")
-            ref = alleles[0] if len(alleles) > 0 else "N/A"
-            alt = alleles[1] if len(alleles) > 1 else "N/A"
-            
-            return chrom, pos, ref, alt, "hg38"  # Default genome build
-    return None  # Return None if no valid data is found
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Extracting Alleles
+        allele_section = soup.find(string="Alleles")
+        if allele_section:
+            parent_element = allele_section.find_parent()
+            if parent_element:
+                allele_text = parent_element.find_next_sibling().text
+                alleles = [allele.strip() for allele in allele_text.split('/') if allele.strip()]
+        
+        # Extracting Chromosome and Position
+        position_section = soup.find(string="GRCh38")
+        if position_section:
+            parent_element = position_section.find_parent()
+            if parent_element:
+                chrom_pos_text = parent_element.find_next_sibling().text
+                chrom, pos = chrom_pos_text.split(':')
+                return chrom.strip(), pos.strip(), alleles
+    return None
 
-
-# Function to parse user input (either variant or rsID)
-def get_variant_info(message):
-    """
-    Parses user input for genetic variants.
-    Supports:
-    - Direct variant input (chr6:160585140-T>G)
-    - SNP rsID input (rs123456), which is converted to variant format.
-    """
-    
-    # If input is an rsID (e.g., "rs123456")
-    if message.lower().startswith("rs") and message[2:].isdigit():
-        snp_data = fetch_snp_info(message)  # Fetch SNP info
-        if snp_data:
-            st.success(f"SNP {message} resolved to variant: {snp_data}")
-            return snp_data  # Process SNP as variant
-        else:
-            st.error(f"Could not find details for {message}. Try another SNP ID.")
-            return None
-
-    # If not rsID, assume it's a direct variant format
-    parts = message.split(',')
-    if len(parts) == 5 and parts[1].isdigit():
-        return parts  # Return variant details if valid format
-
-    st.warning("Invalid input. Please enter a valid genetic variant or SNP ID.")
-    return None  # Return None if format is invalid
-
-
-# Function to interact with Groq API for assistant responses
+# Function to interact with Groq AI for responses
 def get_assistant_response(user_input):
-    """
-    Uses Groq API to provide genomic explanations and disease associations.
-    """
     messages = [
         {"role": "system", "content": "You are an AI assistant specializing in genomic research and variant analysis."},
         {"role": "user", "content": user_input}
@@ -85,19 +56,15 @@ def get_assistant_response(user_input):
     
     return completion.choices[0].message.content
 
-
-# Function to get variant classification from GeneBe API
-def fetch_gene_classification(parts):
-    """
-    Queries GeneBe API for ACMG classification and variant effect.
-    """
+# Function to query GeneBe API for variant classification
+def fetch_gene_classification(chrom, pos, ref, alt):
     url = "https://api.genebe.net/cloud/api-public/v1/variant"
     params = {
-        "chr": parts[0],
-        "pos": parts[1],
-        "ref": parts[2],
-        "alt": parts[3],
-        "genome": parts[4]
+        "chr": chrom,
+        "pos": pos,
+        "ref": ref,
+        "alt": alt,
+        "genome": "hg38"
     }
     
     headers = {"Accept": "application/json"}
@@ -122,34 +89,61 @@ def fetch_gene_classification(parts):
 
     return None
 
-
-# Main Streamlit interaction loop
-if "last_input" not in st.session_state:
-    st.session_state.last_input = ""
-
+# Main Streamlit Interaction
 user_input = st.text_input("Enter a genetic variant (ex: chr6:160585140-T>G or rs123456)")
 
-if user_input != st.session_state.last_input:
-    st.session_state.last_input = user_input
-    parts = get_variant_info(user_input)  # Parse variant
-    
-    if parts:
-        st.write(f"Processing variant: {parts}")
+if user_input:
+    if user_input.lower().startswith("rs"):  # SNP Handling
+        snp_id = user_input.strip()
+        snp_data = fetch_snp_info(snp_id)
         
-        # Fetch variant classification
-        gene_data = fetch_gene_classification(parts)
-        
-        if gene_data:
-            st.write("### ACMG Classification Results:")
-            st.table(gene_data)  # Display ACMG classification
+        if snp_data:
+            chrom, pos, alleles = snp_data
+            st.success(f"Resolved {snp_id} to Chromosome: {chrom}, Position: {pos}, Alleles: {', '.join(alleles)}")
+            selected_allele = st.selectbox("Select a reference allele:", alleles)
+            alt_allele = st.selectbox("Select an alternate allele:", alleles)
 
-            # Use AI to explain the variant
-            ai_input = f"Explain the genetic variant: {parts}"
-            ai_response = get_assistant_response(ai_input)
-            st.write("### AI Explanation:")
-            st.write(ai_response)
+            if st.button("Proceed with Variant Interpretation"):
+                formatted_variant = f"{chrom},{pos},{selected_allele},{alt_allele},hg38"
+                st.write(f"Proceeding with variant: {formatted_variant}")
+
+                # Fetch classification
+                gene_data = fetch_gene_classification(chrom, pos, selected_allele, alt_allele)
+                
+                if gene_data:
+                    st.write("### ACMG Classification Results:")
+                    st.table(gene_data)  # Display ACMG classification
+
+                    # AI Explanation
+                    ai_input = f"Explain the genetic variant: {formatted_variant}"
+                    ai_response = get_assistant_response(ai_input)
+                    st.write("### AI Explanation:")
+                    st.write(ai_response)
+                else:
+                    st.error("No classification data found for this variant.")
         else:
-            st.error("No classification data found for this variant.")
-    else:
-        st.warning("Please enter a valid variant or SNP ID.")
+            st.error(f"Could not retrieve SNP details for {snp_id}.")
+    
+    else:  # Direct Variant Handling
+        parts = user_input.split(',')
+        if len(parts) == 5:
+            chrom, pos, ref, alt, genome = parts
+            st.write(f"Processing variant: {chrom}-{pos}-{ref}>{alt} ({genome})")
+
+            # Fetch classification
+            gene_data = fetch_gene_classification(chrom, pos, ref, alt)
+            
+            if gene_data:
+                st.write("### ACMG Classification Results:")
+                st.table(gene_data)  # Display ACMG classification
+
+                # AI Explanation
+                ai_input = f"Explain the genetic variant: {chrom},{pos},{ref},{alt},{genome}"
+                ai_response = get_assistant_response(ai_input)
+                st.write("### AI Explanation:")
+                st.write(ai_response)
+            else:
+                st.error("No classification data found for this variant.")
+        else:
+            st.warning("Invalid variant format. Please enter a valid variant.")
 
