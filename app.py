@@ -38,6 +38,10 @@ if "flag" not in st.session_state:
     st.session_state.flag = False
 if "reply" not in st.session_state:
     st.session_state.reply = ""
+if "variant_parts" not in st.session_state:
+    st.session_state.variant_parts = None
+if "assistant_response" not in st.session_state:
+    st.session_state.assistant_response = ""
 
 # Define the initial system message
 initial_messages = [
@@ -83,7 +87,7 @@ def fetch_alleles(snp_id):
                 return alleles
     return None
 
-# New function to fetch variant information from an SNP page:
+# New function to fetch variant information from an SNP page
 def fetch_variant_info(snp_id):
     url = f"https://www.ncbi.nlm.nih.gov/snp/{snp_id}"
     response = requests.get(url)
@@ -202,28 +206,28 @@ def get_variant_info(message):
     try:
         parts = message.split(',')
         if len(parts) == 5 and parts[1].isdigit():
-            st.session_state.flag = True
             return parts
         else:
-            st.session_state.flag = False
             return []
     except Exception as e:
         st.write(f"Error while parsing variant: {e}")
         return []
 
 # Main Streamlit interaction loop
+
 if "last_input" not in st.session_state:
     st.session_state.last_input = ""
     
 user_input = st.text_input("Enter a genetic variant (ex: chr6:160585140-T>G)")
 
+# If a new input is entered, process it
 if user_input != st.session_state.last_input:
     st.session_state.last_input = user_input
     assistant_response = get_assistant_response_initial(user_input)
+    st.session_state.assistant_response = assistant_response  # store for later use
     st.write(f"Assistant: {assistant_response}")
     
-    # --- Extra SNP Step ---
-    # If the input starts with 'rs', detect it as an SNP and fetch its position/allele info before feeding to AI.
+    # --- SNP Branch: Extra Step if input starts with 'rs' ---
     if user_input.lower().startswith("rs"):
         snp_id = user_input.split()[0]  # e.g., rs121913514
         variant_info = fetch_variant_info(snp_id)
@@ -233,125 +237,106 @@ if user_input != st.session_state.last_input:
                 st.success(f"Found alleles for {snp_id}: {', '.join(alleles)}")
                 selected_allele = st.selectbox("Select an allele:", alleles)
                 if st.button("Proceed with Variant Interpretation"):
-                    parts = [variant_info["chr"], variant_info["pos"], variant_info["ref"], selected_allele, "hg38"]
-                    st.session_state.variant_parts = parts
+                    # Build variant parts in expected format
+                    st.session_state.variant_parts = [variant_info["chr"], variant_info["pos"], variant_info["ref"], selected_allele, "hg38"]
                     st.session_state.flag = True
                     with st.chat_message("assistant"):
                         st.write(f"Interpreting variant {snp_id} with allele {selected_allele}...")
+                    st.session_state.messages = st.session_state.get("messages", [])
                     st.session_state.messages.append({"role": "assistant", "content": f"Interpreting {snp_id} with allele {selected_allele}..."})
-    # --- End SNP Step ---
-
-    # Determine the variant parts: if an SNP variant has been set, use it; otherwise, parse the assistant's CSV response.
-    if user_input.lower().startswith("rs"):
-        parts = st.session_state.get("variant_parts", [])
     else:
+        # For non-SNP input, parse the CSV response from the assistant
         parts = get_variant_info(assistant_response)
-    
-    if st.session_state.flag == True and parts:
-        # ACMG / GENEBE API
-        url = "https://api.genebe.net/cloud/api-public/v1/variant"
-        params = {
-            "chr": parts[0],
-            "pos": parts[1],
-            "ref": parts[2],
-            "alt": parts[3],
-            "genome": parts[4]
-        }
-        headers = {"Accept": "application/json"}
-        response = requests.get(url, headers=headers, params=params)
-        if response.status_code == 200:
-            try:
-                data = response.json()
-                variant = data["variants"][0]  # Get the first variant
-                st.session_state.GeneBe_results[0] = variant.get("acmg_classification", "Not Available")
-                st.session_state.GeneBe_results[1] = variant.get("effect", "Not Available")
-                st.session_state.GeneBe_results[2] = variant.get("gene_symbol", "Not Available")
-                st.session_state.GeneBe_results[3] = variant.get("gene_hgnc_id", "Not Available")
-                st.session_state.GeneBe_results[4] = variant.get("dbsnp", "Not Available")
-                st.session_state.GeneBe_results[5] = variant.get("frequency_reference_population", "Not Available")
-                st.session_state.GeneBe_results[6] = variant.get("acmg_score", "Not Available")
-                st.session_state.GeneBe_results[7] = variant.get("acmg_criteria", "Not Available")
-            except JSONDecodeError as E:
-                pass
-        
-        # INTERVAR API
-        url = "http://wintervar.wglab.org/api_new.php"
-        params = {
-            "queryType": "position",
-            "chr": parts[0],
-            "pos": parts[1],
-            "ref": parts[2],
-            "alt": parts[3],
-            "build": parts[4]
-        }
-        response = requests.get(url, params=params)
-        if response.status_code == 200:
-            try:
-                results = response.json()
-                st.session_state.InterVar_results[0] = results.get("Intervar", "Not Available")
-                st.session_state.InterVar_results[2] = results.get("Gene", "Not Available")
-            except JSONDecodeError as E:
-                st.session_state.InterVar_results = ['-','','-','']
-                pass
+        if parts:
+            st.session_state.variant_parts = parts
+            st.session_state.flag = True
 
-        # Display ACMG results with appropriate color
-        result_color = get_color(st.session_state.GeneBe_results[0])
-        st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
-        data = {
-            "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
-            "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2],
-                                 st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5],
-                                 st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
-            "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1],
-                                 st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
-        }
-        acmg_results = pd.DataFrame(data)
-        acmg_results.set_index("Attribute", inplace=True)
-        st.dataframe(acmg_results, use_container_width=True)
-        
-        st.write("### ClinGen Gene-Disease Results")
-        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:'+str(st.session_state.GeneBe_results[3]))
-        
-        user_input_1 = f"The following diseases were found to be linked to the gene in interest: {st.session_state.disease_classification_dict}. Explain these diseases in depth, announce if a disease has been refuted, no need to explain that disease.if no diseases found reply with: No linked diseases found "
-        st.session_state.reply = get_assistant_response_1(user_input_1)
-        st.markdown(
-            f"""
-            <div class="justified-text">
-                Assistant: {st.session_state.reply}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-else:
-    if st.session_state.flag == True:
-        result_color = get_color(st.session_state.GeneBe_results[0])
-        st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
-        data = {
-            "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
-            "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2],
-                                 st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5],
-                                 st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
-            "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1],
-                                 st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
-        }
-        acmg_results = pd.DataFrame(data)
-        acmg_results.set_index("Attribute", inplace=True)
-        st.dataframe(acmg_results, use_container_width=True)
-        st.write("### ClinGen Gene-Disease Results")
-        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:'+str(st.session_state.GeneBe_results[3]))
-        st.markdown(
-            f"""
-            <div class="justified-text">
-                Assistant: {st.session_state.reply}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+# -----------------------------
+# Regardless of whether the input is new or not,
+# if a valid variant has been set (i.e. st.session_state.flag is True)
+# then perform the API calls and display results.
+if st.session_state.flag and st.session_state.variant_parts:
+    parts = st.session_state.variant_parts
+    # GENEBE API call
+    url = "https://api.genebe.net/cloud/api-public/v1/variant"
+    params = {
+        "chr": parts[0],
+        "pos": parts[1],
+        "ref": parts[2],
+        "alt": parts[3],
+        "genome": parts[4]
+    }
+    headers = {"Accept": "application/json"}
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            variant = data["variants"][0]  # Get the first variant
+            st.session_state.GeneBe_results[0] = variant.get("acmg_classification", "Not Available")
+            st.session_state.GeneBe_results[1] = variant.get("effect", "Not Available")
+            st.session_state.GeneBe_results[2] = variant.get("gene_symbol", "Not Available")
+            st.session_state.GeneBe_results[3] = variant.get("gene_hgnc_id", "Not Available")
+            st.session_state.GeneBe_results[4] = variant.get("dbsnp", "Not Available")
+            st.session_state.GeneBe_results[5] = variant.get("frequency_reference_population", "Not Available")
+            st.session_state.GeneBe_results[6] = variant.get("acmg_score", "Not Available")
+            st.session_state.GeneBe_results[7] = variant.get("acmg_criteria", "Not Available")
+        except JSONDecodeError:
+            pass
+
+    # INTERVAR API call
+    url = "http://wintervar.wglab.org/api_new.php"
+    params = {
+        "queryType": "position",
+        "chr": parts[0],
+        "pos": parts[1],
+        "ref": parts[2],
+        "alt": parts[3],
+        "build": parts[4]
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        try:
+            results = response.json()
+            st.session_state.InterVar_results[0] = results.get("Intervar", "Not Available")
+            st.session_state.InterVar_results[2] = results.get("Gene", "Not Available")
+        except JSONDecodeError:
+            st.session_state.InterVar_results = ['-','','-','']
+    
+    # Display ACMG results with appropriate color
+    result_color = get_color(st.session_state.GeneBe_results[0])
+    st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
+    data = {
+        "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
+        "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1],
+                             st.session_state.GeneBe_results[2], st.session_state.GeneBe_results[3],
+                             st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5],
+                             st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
+        "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1],
+                             st.session_state.InterVar_results[2], st.session_state.InterVar_results[3],
+                             '', '', '', ''],
+    }
+    acmg_results = pd.DataFrame(data)
+    acmg_results.set_index("Attribute", inplace=True)
+    st.dataframe(acmg_results, use_container_width=True)
+    
+    st.write("### ClinGen Gene-Disease Results")
+    find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:' + str(st.session_state.GeneBe_results[3]))
+    
+    user_input_1 = f"The following diseases were found to be linked to the gene in interest: {st.session_state.disease_classification_dict}. Explain these diseases in depth, announce if a disease has been refuted, no need to explain that disease.if no diseases found reply with: No linked diseases found"
+    st.session_state.reply = get_assistant_response_1(user_input_1)
+    st.markdown(
+        f"""
+        <div class="justified-text">
+            Assistant: {st.session_state.reply}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # FINAL CHATBOT
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
-        
+    
 for message in st.session_state["messages"]:
     with st.chat_message(message["role"]):
         st.write(message["content"])
