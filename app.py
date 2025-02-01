@@ -1,149 +1,398 @@
-from json.decoder import JSONDecodeError  
+from json.decoder import JSONDecodeError  # Import JSONDecodeError from json.decoder
 import streamlit as st
 import requests
 from groq import Groq
 import pandas as pd
 from bs4 import BeautifulSoup
+import re  # Added for regex matching
 
+parts = []
+
+# Set page configuration
 st.set_page_config(page_title="DxVar", layout="centered")
+
+st.markdown("""
+    <style>
+        .justified-text {
+            text-align: justify;
+        }
+        .results-table {
+            margin-left: auto;
+            margin-right: auto;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 st.title("DxVar")
 
-# Load API Key from Streamlit Secrets
+# Initialize Groq API client
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# Function to fetch SNP details (chromosome, position, allele options) from NCBI
-def fetch_snp_info(snp_id):
+if "GeneBe_results" not in st.session_state:
+    st.session_state.GeneBe_results = ['-','-','-','-','-','-','-','-']
+if "InterVar_results" not in st.session_state:
+    st.session_state.InterVar_results = ['-','','-','']
+if "disease_classification_dict" not in st.session_state:
+    st.session_state.disease_classification_dict = {"No diseases found"}
+if "flag" not in st.session_state:
+    st.session_state.flag = False
+if "reply" not in st.session_state:
+    st.session_state.reply = ""
+
+# Define the initial system message
+initial_messages = [
+    {
+        "role": "system",
+        "content": (
+            "You are a clinician assistant chatbot specializing in genomic research and variant analysis. "
+            "Your task is to interpret user-provided genetic variant data, identify possible Mendelian diseases linked to genes, "
+            "and provide concise responses. If the user enters variants, you are to respond in a CSV format as such: "
+            "chromosome,position,ref base,alt base,and if no genome is provided, assume hg38. Example: "
+            "User input: chr6:160585140-T>G. You respond: 6,160585140,T,G,hg38. This response should be standalone with no extra texts. "
+            "Remember bases can be multiple letters (e.g., chr6:160585140-T>GG). If the user has additional requests with the message "
+            "including the variant (e.g., 'tell me about diseases linked with the variant: chr6:160585140-T>G'), "
+            "ask them to enter only the variant first. They can ask follow-up questions afterward. "
+            "The user can enter the variant in any format, but it should be the variant alone with no follow-up questions."
+            "If the user enters an rs value simply return the rs value, example:"
+            "User input: tell me about rs1234. You respond: rs1234"
+            "if both rs and chromosome,position,ref base,alt base are given, give priority to the chromosome, position,ref base,alt base"
+            "and only return that, however if any info is missing from chromosome,position,ref base,alt base, just use rs value and return rs"
+            "Example: rs124234 chromosome:3, pos:13423. You reply: rs124234. since the ref base and alt base are missing"
+        ),
+    }
+]
+
+file_url = 'https://github.com/wah644/streamlit_app.py/blob/main/Clingen-Gene-Disease-Summary-2025-01-03.csv?raw=true'
+df = pd.read_csv(file_url)
+
+
+# ALL FUNCTIONS
+
+def fetch_alleles(snp_id):
     url = f"https://www.ncbi.nlm.nih.gov/snp/{snp_id}"
     response = requests.get(url)
 
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Extracting Alleles
+        # Find the allele section
         allele_section = soup.find(string="Alleles")
         if allele_section:
             parent_element = allele_section.find_parent()
             if parent_element:
                 allele_text = parent_element.find_next_sibling().text
                 alleles = [allele.strip() for allele in allele_text.split('/') if allele.strip()]
-        
-        # Extracting Chromosome and Position
-        position_section = soup.find(string="GRCh38")
-        if position_section:
-            parent_element = position_section.find_parent()
-            if parent_element:
-                chrom_pos_text = parent_element.find_next_sibling().text
-                chrom, pos = chrom_pos_text.split(':')
-                return chrom.strip(), pos.strip(), alleles
+                return alleles
     return None
 
-# Function to interact with Groq AI for responses
-def get_assistant_response(user_input):
-    messages = [
-        {"role": "system", "content": "You are an AI assistant specializing in genomic research and variant analysis."},
-        {"role": "user", "content": user_input}
-    ]
-    
+def fetch_variant_info(snp_id):
+    """
+    Fetches additional variant information from the NCBI SNP page.
+    Extracts chromosome and position using regex on the page text.
+    Assumes the first allele (from fetch_alleles) is the reference allele.
+    """
+    url = f"https://www.ncbi.nlm.nih.gov/snp/{snp_id}"
+    response = requests.get(url)
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, 'html.parser')
+        text = soup.get_text(separator=" ", strip=True)
+        # Attempt to find a chromosome and position pattern (e.g., "chr6:160585140")
+        match = re.search(r"chr(\w+)[\s:]+(\d+)", text)
+        if match:
+            chromosome = match.group(1)
+            position = match.group(2)
+        else:
+            chromosome, position = None, None
+        alleles = fetch_alleles(snp_id)
+        ref = alleles[0] if alleles and len(alleles) > 0 else None
+        return {"chr": chromosome, "pos": position, "ref": ref}
+    return None
+
+# Function to find matching gene symbol and HGNC ID
+def find_gene_match(gene_symbol, hgnc_id):
+    # Check if the gene symbol and HGNC ID columns exist in the data
+    if 'GENE SYMBOL' in df.columns and 'GENE ID (HGNC)' in df.columns:
+        # Filter rows matching the gene symbol and HGNC ID
+        matching_rows = df[(df['GENE SYMBOL'] == gene_symbol) & (df['GENE ID (HGNC)'] == hgnc_id)]
+                
+        if not matching_rows.empty:
+            selected_columns = matching_rows[['DISEASE LABEL', 'MOI', 'CLASSIFICATION', 'DISEASE ID (MONDO)']]
+            # Apply the styling function
+            styled_table = selected_columns.style.apply(highlight_classification, axis=1)
+            # Display the table with scrolling
+            st.dataframe(styled_table, use_container_width=True)
+            st.session_state.disease_classification_dict = dict(zip(matching_rows['DISEASE LABEL'], matching_rows['CLASSIFICATION']))
+        else:
+            st.markdown("<p style='color:red;'>No match found.</p>", unsafe_allow_html=True)
+    else:
+        st.write("No existing gene-disease match found")
+        
+def get_color(result):
+    if result == "Pathogenic":
+        return "red"
+    elif result == "Likely_pathogenic":
+        return "red"
+    elif result == "Uncertain_significance":
+        return "orange"
+    elif result == "Likely_benign":
+        return "lightgreen"
+    elif result == "Benign":
+        return "green"
+    else:
+        return "black"  # Default color if no match
+        
+
+# Function to highlight the rows based on classification with 65% transparency
+def highlight_classification(row):
+    color_map = {
+        "Definitive": "color: rgba(66, 238, 66)",  # Green
+        "Disputed": "color: rgba(255, 0, 0)",  # Red 
+        "Moderate": "color: rgba(144, 238, 144)",  # Light Green 
+        "Limited": "color: rgba(255, 204, 102)",  # Orange 
+        "No Known Disease Relationship": "",
+        "Strong": "color: rgba(66, 238, 66)",  #  Green 
+        "Refuted": "color: rgba(255, 0, 0)"  # Red 
+    }
+    classification = row['CLASSIFICATION']
+    return [color_map.get(classification, "")] * len(row)
+
+
+# Function to interact with Groq API for assistant responses
+def get_assistant_response_initial(user_input):
+    groq_messages = [{"role": "user", "content": user_input}]
+    for message in initial_messages:
+        groq_messages.insert(0, {"role": message["role"], "content": message["content"]})
+
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=messages,
+        messages=groq_messages,
+        temperature=1,
+        max_completion_tokens=512,
+        top_p=1,
+        stream=False,
+        stop=None,
+    )
+
+    return completion.choices[0].message.content
+
+# Function to interact with Groq API for assistant responses
+# Initialize the conversation history
+SYSTEM = [
+    {
+        "role": "system",
+        "content": (
+            "You are a clinician assistant chatbot specializing in genomic research and variant analysis. "
+            "Your task is to interpret user-provided genetic variant data, identify possible Mendelian diseases linked to genes."
+        ),
+    }
+]
+
+# Function to interact with Groq API for assistant responses
+def get_assistant_response_1(user_input):
+    # Add user input to conversation history
+    full_message = SYSTEM + [{"role": "user", "content": user_input}]
+
+    # Send conversation history to API
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=full_message,
         temperature=1,
         max_completion_tokens=1024,
         top_p=1,
         stream=False,
         stop=None,
     )
+
+    assistant_reply = completion.choices[0].message.content
+    return assistant_reply
     
-    return completion.choices[0].message.content
 
-# Function to query GeneBe API for variant classification
-def fetch_gene_classification(chrom, pos, ref, alt):
-    url = "https://api.genebe.net/cloud/api-public/v1/variant"
-    params = {
-        "chr": chrom,
-        "pos": pos,
-        "ref": ref,
-        "alt": alt,
-        "genome": "hg38"
-    }
+# Function to interact with Groq API for assistant response
+def get_assistant_response(chat_history):
+    # Combine system message with full chat history
+    full_conversation = SYSTEM + chat_history  
+
+    # Send conversation history to API
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=full_conversation,
+        temperature=1,
+        max_completion_tokens=1024,
+        top_p=1,
+        stream=False,
+        stop=None,
+    )
+
+    assistant_reply = completion.choices[0].message.content
+    return assistant_reply
+
+###################################################
+
+# Function to parse variant information
+def get_variant_info(message):
+    try:
+        parts = message.split(',')
+        if len(parts) == 5 and parts[1].isdigit():
+            st.session_state.flag = True
+            return parts
+        else:
+            st.session_state.flag = False
+            return []
+    except Exception as e:
+        st.write(f"Error while parsing variant: {e}")
+        return []
+
+# Main Streamlit interaction loop
+if "last_input" not in st.session_state:
+    st.session_state.last_input = ""
     
-    headers = {"Accept": "application/json"}
-    response = requests.get(url, headers=headers, params=params)
+user_input = st.text_input("Enter a genetic variant (ex: chr6:160585140-T>G)")
+
+if user_input != st.session_state.last_input:
+    # Get assistant's response
+    st.session_state.last_input = user_input
+    assistant_response = get_assistant_response_initial(user_input)
+    st.write(f"Assistant: {assistant_response}")
     
-    if response.status_code == 200:
-        try:
-            data = response.json()
-            variant = data["variants"][0]  
-            return {
-                "ACMG Classification": variant.get("acmg_classification", "Not Available"),
-                "Effect": variant.get("effect", "Not Available"),
-                "Gene Symbol": variant.get("gene_symbol", "Not Available"),
-                "HGNC ID": variant.get("gene_hgnc_id", "Not Available"),
-                "dbSNP": variant.get("dbsnp", "Not Available"),
-                "Frequency in Population": variant.get("frequency_reference_population", "Not Available"),
-                "ACMG Score": variant.get("acmg_score", "Not Available"),
-                "ACMG Criteria": variant.get("acmg_criteria", "Not Available"),
-            }
-        except JSONDecodeError:
-            return None
-
-    return None
-
-# Main Streamlit Interaction
-user_input = st.text_input("Enter a genetic variant (ex: chr6:160585140-T>G or rs123456)")
-
-if user_input:
-    if user_input.lower().startswith("rs"):  # SNP Handling
-        snp_id = user_input.strip()
-        snp_data = fetch_snp_info(snp_id)
+    # SNP branch: If the user enters an rs ID, fetch the allele options and variant info from NCBI
+    if user_input.lower().startswith("rs"):
+        snp_id = user_input.split()[0]  # Extract SNP ID (e.g., rs121913514)
+        alleles = fetch_alleles(snp_id)
+        variant_info = fetch_variant_info(snp_id)
         
-        if snp_data:
-            chrom, pos, alleles = snp_data
-            st.success(f"Resolved {snp_id} to Chromosome: {chrom}, Position: {pos}, Alleles: {', '.join(alleles)}")
-            selected_allele = st.selectbox("Select a reference allele:", alleles)
-            alt_allele = st.selectbox("Select an alternate allele:", alleles)
-
+        if alleles and variant_info and variant_info["chr"] and variant_info["pos"] and variant_info["ref"]:
+            st.success(f"Found alleles for {snp_id}: {', '.join(alleles)}")
+            selected_allele = st.selectbox("Select an allele:", alleles)
             if st.button("Proceed with Variant Interpretation"):
-                formatted_variant = f"{chrom},{pos},{selected_allele},{alt_allele},hg38"
-                st.write(f"Proceeding with variant: {formatted_variant}")
-
-                # Fetch classification
-                gene_data = fetch_gene_classification(chrom, pos, selected_allele, alt_allele)
-                
-                if gene_data:
-                    st.write("### ACMG Classification Results:")
-                    st.table(gene_data)  # Display ACMG classification
-
-                    # AI Explanation
-                    ai_input = f"Explain the genetic variant: {formatted_variant}"
-                    ai_response = get_assistant_response(ai_input)
-                    st.write("### AI Explanation:")
-                    st.write(ai_response)
-                else:
-                    st.error("No classification data found for this variant.")
-        else:
-            st.error(f"Could not retrieve SNP details for {snp_id}.")
+                # Construct the variant info as: chromosome, position, ref allele, alt allele, genome
+                parts = [variant_info["chr"], variant_info["pos"], variant_info["ref"], selected_allele, "hg38"]
+                st.session_state.variant_parts = parts
+                st.session_state.flag = True
+                st.chat_message("assistant").write(f"Interpreting variant {snp_id} with allele {selected_allele}...")
+                st.session_state.messages.append({"role": "assistant", "content": f"Interpreting {snp_id} with allele {selected_allele}..."})
     
-    else:  # Direct Variant Handling
-        parts = user_input.split(',')
-        if len(parts) == 5:
-            chrom, pos, ref, alt, genome = parts
-            st.write(f"Processing variant: {chrom}-{pos}-{ref}>{alt} ({genome})")
+    # For non-rs inputs, try to parse variant information from the assistant response
+    # If an rs branch was executed and the button was clicked, we use the constructed variant info.
+    if st.session_state.flag:
+        parts = st.session_state.get("variant_parts", get_variant_info(assistant_response))
+    
+    if st.session_state.flag == True:
+        # ACMG & GENEBE API
+        url = "https://api.genebe.net/cloud/api-public/v1/variant"
+        params = {
+            "chr": parts[0],
+            "pos": parts[1],
+            "ref": parts[2],
+            "alt": parts[3],
+            "genome": parts[4]
+        }
+    
+        headers = {
+            "Accept": "application/json"
+        }
+    
+        response = requests.get(url, headers=headers, params=params)
+        
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                variant = data["variants"][0]  # Get the first variant
+                st.session_state.GeneBe_results[0] = variant.get("acmg_classification", "Not Available")
+                st.session_state.GeneBe_results[1] = variant.get("effect", "Not Available")
+                st.session_state.GeneBe_results[2] = variant.get("gene_symbol", "Not Available")
+                st.session_state.GeneBe_results[3] = variant.get("gene_hgnc_id", "Not Available")
+                st.session_state.GeneBe_results[4] = variant.get("dbsnp", "Not Available")
+                st.session_state.GeneBe_results[5] = variant.get("frequency_reference_population", "Not Available")
+                st.session_state.GeneBe_results[6] = variant.get("acmg_score", "Not Available")
+                st.session_state.GeneBe_results[7] = variant.get("acmg_criteria", "Not Available")
+            except JSONDecodeError as E:
+                pass
+        
+        # INTERVAR API
+        url = "http://wintervar.wglab.org/api_new.php"
+        params = {
+            "queryType": "position",
+            "chr": parts[0],
+            "pos": parts[1],
+            "ref": parts[2],
+            "alt": parts[3],
+            "build": parts[4]
+        }
 
-            # Fetch classification
-            gene_data = fetch_gene_classification(chrom, pos, ref, alt)
-            
-            if gene_data:
-                st.write("### ACMG Classification Results:")
-                st.table(gene_data)  # Display ACMG classification
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            try:
+                results = response.json()
+                st.session_state.InterVar_results[0] = results.get("Intervar", "Not Available")
+                st.session_state.InterVar_results[2] = results.get("Gene", "Not Available")
+            except JSONDecodeError as E:
+                st.session_state.InterVar_results = ['-','','-','']
+                pass
 
-                # AI Explanation
-                ai_input = f"Explain the genetic variant: {chrom},{pos},{ref},{alt},{genome}"
-                ai_response = get_assistant_response(ai_input)
-                st.write("### AI Explanation:")
-                st.write(ai_response)
-            else:
-                st.error("No classification data found for this variant.")
-        else:
-            st.warning("Invalid variant format. Please enter a valid variant.")
+        # Display the ACMG results with the appropriate color
+        result_color = get_color(st.session_state.GeneBe_results[0])
+        st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
+        data = {
+            "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
+            "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2], st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5], st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
+            "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1], st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
+        }
+        acmg_results = pd.DataFrame(data)
+        acmg_results.set_index("Attribute", inplace=True)
+        st.dataframe(acmg_results, use_container_width=True)
+        
+        # GENE-DISEASE DATABASE
+        st.write("### ClinGen Gene-Disease Results")
+        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:'+str(st.session_state.GeneBe_results[3]))
+        
+        user_input_1 = f"The following diseases were found to be linked to the gene in interest: {st.session_state.disease_classification_dict}. Explain these diseases in depth, announce if a disease has been refuted, no need to explain that disease. If no diseases found reply with: No linked diseases found"
+        st.session_state.reply = get_assistant_response_1(user_input_1)
+        st.markdown(
+            f"""
+            <div class="justified-text">
+                Assistant: {st.session_state.reply}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+else:
+    if st.session_state.flag == True:
+        result_color = get_color(st.session_state.GeneBe_results[0])
+        st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
+        data = {
+            "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
+            "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2], st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5], st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
+            "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1], st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
+        }
+        acmg_results = pd.DataFrame(data)
+        acmg_results.set_index("Attribute", inplace=True)
+        st.dataframe(acmg_results, use_container_width=True)
+        st.write("### ClinGen Gene-Disease Results")
+        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:'+str(st.session_state.GeneBe_results[3]))
+        st.markdown(
+            f"""
+            <div class="justified-text">
+                Assistant: {st.session_state.reply}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
+# FINAL CHATBOT
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
+        
+# Display chat history
+for message in st.session_state["messages"]:
+    with st.chat_message(message["role"]):
+        st.write(message["content"])
+        
+if chat_message := st.chat_input("I can help explain diseases!"):
+    st.session_state["messages"].append({"role": "user", "content": chat_message})
+    with st.chat_message("user"):
+        st.write(chat_message)
+    with st.chat_message("assistant"):
+        with st.spinner("Processing your query..."):
+            response = get_assistant_response(st.session_state["messages"])  # Send full history
+            st.write(response)
+            st.session_state["messages"].append({"role": "assistant", "content": response})
