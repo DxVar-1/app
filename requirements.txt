@@ -2,3 +2,4 @@ streamlit
 replicate
 python-dotenv
 groq
+bs4
