@@ -62,7 +62,7 @@ initial_messages = [
     }
 ]
 
-file_url = 'https://github.com/wah644/streamlit_app.py/blob/main/Clingen-Gene-Disease-Summary-2025-01-03.csv?raw=true'
+file_url = 'https://github.com/DxVar-1/app/blob/main/Clingen-Gene-Disease-Summary-2025-01-03.csv?raw=true'
 df = pd.read_csv(file_url)
 
 
