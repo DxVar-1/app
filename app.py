@@ -218,6 +218,7 @@ def get_variant_info(message):
         return []
 
 # ---------------------------
+user_input = st.text_input("Enter a genetic variant (ex: chr6:160585140-T>G)")
 # Process input regardless of whether it changed
 if user_input:
     # If the input starts with 'rs', run the SNP branch.
