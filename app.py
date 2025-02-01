@@ -28,8 +28,15 @@ st.markdown("""
 
 st.title("DxVar")
 
-# Initialize Groq API client
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+# Load API Key from secrets or environment variable
+API_KEY = st.secrets.get("GROQ_API_KEY", None)
+
+if API_KEY is None:
+    st.error("GROQ API Key is missing! Please add it to Streamlit secrets or set it in your environment.")
+    st.stop()
+
+# Initialize Groq Client
+client = Groq(api_key=API_KEY)
 
 if "GeneBe_results" not in st.session_state:
     st.session_state.GeneBe_results = ['-','-','-','-','-','-','-','-']
