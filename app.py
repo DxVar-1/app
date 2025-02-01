@@ -39,7 +39,7 @@ if "flag" not in st.session_state:
 if "reply" not in st.session_state:
     st.session_state.reply = ""
 
-# Define the initial system message (unchanged)
+# Define the initial system message
 initial_messages = [
     {
         "role": "system",
@@ -71,10 +71,8 @@ df = pd.read_csv(file_url)
 def fetch_alleles(snp_id):
     url = f"https://www.ncbi.nlm.nih.gov/snp/{snp_id}"
     response = requests.get(url)
-
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
-        
         # Find the allele section
         allele_section = soup.find(string="Alleles")
         if allele_section:
@@ -85,19 +83,15 @@ def fetch_alleles(snp_id):
                 return alleles
     return None
 
-
+# New function to fetch variant information from an SNP page:
 def fetch_variant_info(snp_id):
-    """
-    Extracts the chromosome and position from the NCBI SNP page using a regex.
-    Also returns the reference allele (assumed to be the first allele found).
-    """
     url = f"https://www.ncbi.nlm.nih.gov/snp/{snp_id}"
     response = requests.get(url)
     if response.status_code == 200:
         soup = BeautifulSoup(response.text, 'html.parser')
         text = soup.get_text(separator=" ", strip=True)
-        # Attempt to find a pattern like "chr6:160585140"
-        match = re.search(r"chr(\w+)[\s:]+(\d+)", text)
+        # Look for a pattern like "chr6:160585140" (case-insensitive)
+        match = re.search(r"chr(\w+):(\d+)", text, re.IGNORECASE)
         if match:
             chromosome = match.group(1)
             position = match.group(2)
@@ -107,7 +101,6 @@ def fetch_variant_info(snp_id):
         ref = alleles[0] if alleles and len(alleles) > 0 else None
         return {"chr": chromosome, "pos": position, "ref": ref}
     return None
-
 
 def find_gene_match(gene_symbol, hgnc_id):
     if 'GENE SYMBOL' in df.columns and 'GENE ID (HGNC)' in df.columns:
@@ -122,7 +115,6 @@ def find_gene_match(gene_symbol, hgnc_id):
     else:
         st.write("No existing gene-disease match found")
         
-
 def get_color(result):
     if result == "Pathogenic":
         return "red"
@@ -137,7 +129,6 @@ def get_color(result):
     else:
         return "black"  # Default color if no match
         
-
 def highlight_classification(row):
     color_map = {
         "Definitive": "color: rgba(66, 238, 66)",
@@ -150,7 +141,6 @@ def highlight_classification(row):
     }
     classification = row['CLASSIFICATION']
     return [color_map.get(classification, "")] * len(row)
-
 
 def get_assistant_response_initial(user_input):
     groq_messages = [{"role": "user", "content": user_input}]
@@ -167,7 +157,6 @@ def get_assistant_response_initial(user_input):
     )
     return completion.choices[0].message.content
 
-
 SYSTEM = [
     {
         "role": "system",
@@ -177,7 +166,6 @@ SYSTEM = [
         ),
     }
 ]
-
 
 def get_assistant_response_1(user_input):
     full_message = SYSTEM + [{"role": "user", "content": user_input}]
@@ -192,7 +180,6 @@ def get_assistant_response_1(user_input):
     )
     assistant_reply = completion.choices[0].message.content
     return assistant_reply
-    
 
 def get_assistant_response(chat_history):
     full_conversation = SYSTEM + chat_history  
@@ -207,8 +194,10 @@ def get_assistant_response(chat_history):
     )
     assistant_reply = completion.choices[0].message.content
     return assistant_reply
-    
 
+###################################################
+
+# Function to parse variant information from the assistant's CSV response
 def get_variant_info(message):
     try:
         parts = message.split(',')
@@ -222,7 +211,6 @@ def get_variant_info(message):
         st.write(f"Error while parsing variant: {e}")
         return []
 
-
 # Main Streamlit interaction loop
 if "last_input" not in st.session_state:
     st.session_state.last_input = ""
@@ -234,27 +222,33 @@ if user_input != st.session_state.last_input:
     assistant_response = get_assistant_response_initial(user_input)
     st.write(f"Assistant: {assistant_response}")
     
-    # SNP branch: if the input is an rs ID, provide allele options and construct a variant.
+    # --- Extra SNP Step ---
+    # If the input starts with 'rs', detect it as an SNP and fetch its position/allele info before feeding to AI.
     if user_input.lower().startswith("rs"):
-        snp_id = user_input.split()[0]  # Extract rs value (e.g., rs121913514)
-        alleles = fetch_alleles(snp_id)
+        snp_id = user_input.split()[0]  # e.g., rs121913514
         variant_info = fetch_variant_info(snp_id)
-        if alleles and variant_info and variant_info["chr"] and variant_info["pos"] and variant_info["ref"]:
-            st.success(f"Found alleles for {snp_id}: {', '.join(alleles)}")
-            selected_allele = st.selectbox("Select an allele:", alleles)
-            if st.button("Proceed with Variant Interpretation"):
-                parts = [variant_info["chr"], variant_info["pos"], variant_info["ref"], selected_allele, "hg38"]
-                st.session_state.variant_parts = parts
-                st.session_state.flag = True
-                st.chat_message("assistant").write(f"Interpreting variant {snp_id} with allele {selected_allele}...")
-                st.session_state.messages.append({"role": "assistant", "content": f"Interpreting {snp_id} with allele {selected_allele}..."})
+        if variant_info and variant_info["chr"] and variant_info["pos"] and variant_info["ref"]:
+            alleles = fetch_alleles(snp_id)
+            if alleles:
+                st.success(f"Found alleles for {snp_id}: {', '.join(alleles)}")
+                selected_allele = st.selectbox("Select an allele:", alleles)
+                if st.button("Proceed with Variant Interpretation"):
+                    parts = [variant_info["chr"], variant_info["pos"], variant_info["ref"], selected_allele, "hg38"]
+                    st.session_state.variant_parts = parts
+                    st.session_state.flag = True
+                    with st.chat_message("assistant"):
+                        st.write(f"Interpreting variant {snp_id} with allele {selected_allele}...")
+                    st.session_state.messages.append({"role": "assistant", "content": f"Interpreting {snp_id} with allele {selected_allele}..."})
+    # --- End SNP Step ---
+
+    # Determine the variant parts: if an SNP variant has been set, use it; otherwise, parse the assistant's CSV response.
+    if user_input.lower().startswith("rs"):
+        parts = st.session_state.get("variant_parts", [])
+    else:
+        parts = get_variant_info(assistant_response)
     
-    # For non-rs inputs, parse the variant info from the assistant response.
-    if st.session_state.flag:
-        parts = st.session_state.get("variant_parts", get_variant_info(assistant_response))
-    
-    if st.session_state.flag == True:
-        # GENEBE API call
+    if st.session_state.flag == True and parts:
+        # ACMG / GENEBE API
         url = "https://api.genebe.net/cloud/api-public/v1/variant"
         params = {
             "chr": parts[0],
@@ -280,7 +274,7 @@ if user_input != st.session_state.last_input:
             except JSONDecodeError as E:
                 pass
         
-        # INTERVAR API call
+        # INTERVAR API
         url = "http://wintervar.wglab.org/api_new.php"
         params = {
             "queryType": "position",
@@ -300,22 +294,25 @@ if user_input != st.session_state.last_input:
                 st.session_state.InterVar_results = ['-','','-','']
                 pass
 
-        # Display ACMG results and related outputs.
+        # Display ACMG results with appropriate color
         result_color = get_color(st.session_state.GeneBe_results[0])
         st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
         data = {
             "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
-            "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2], st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5], st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
-            "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1], st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
+            "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2],
+                                 st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5],
+                                 st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
+            "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1],
+                                 st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
         }
         acmg_results = pd.DataFrame(data)
         acmg_results.set_index("Attribute", inplace=True)
         st.dataframe(acmg_results, use_container_width=True)
         
         st.write("### ClinGen Gene-Disease Results")
-        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:' + str(st.session_state.GeneBe_results[3]))
+        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:'+str(st.session_state.GeneBe_results[3]))
         
-        user_input_1 = f"The following diseases were found to be linked to the gene in interest: {st.session_state.disease_classification_dict}. Explain these diseases in depth, announce if a disease has been refuted, no need to explain that disease.if no diseases found reply with: No linked diseases found"
+        user_input_1 = f"The following diseases were found to be linked to the gene in interest: {st.session_state.disease_classification_dict}. Explain these diseases in depth, announce if a disease has been refuted, no need to explain that disease.if no diseases found reply with: No linked diseases found "
         st.session_state.reply = get_assistant_response_1(user_input_1)
         st.markdown(
             f"""
@@ -331,14 +328,17 @@ else:
         st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
         data = {
             "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
-            "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2], st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5], st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
-            "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1], st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
+            "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2],
+                                 st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5],
+                                 st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
+            "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1],
+                                 st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
         }
         acmg_results = pd.DataFrame(data)
         acmg_results.set_index("Attribute", inplace=True)
         st.dataframe(acmg_results, use_container_width=True)
         st.write("### ClinGen Gene-Disease Results")
-        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:' + str(st.session_state.GeneBe_results[3]))
+        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:'+str(st.session_state.GeneBe_results[3]))
         st.markdown(
             f"""
             <div class="justified-text">
@@ -348,6 +348,7 @@ else:
             unsafe_allow_html=True,
         )
 
+# FINAL CHATBOT
 if "messages" not in st.session_state:
     st.session_state["messages"] = []
         
