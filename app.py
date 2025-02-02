@@ -111,12 +111,12 @@ def snp_to_vcf(snp_value):
         if not data[3] or len(data[3]) == 0:
             st.error("No results found for the provided rs value.")
             return None
-        # Extracting data
+        # Extracting data from the first matching result
         chr_num = data[3][0][1]       # Chromosome number
         pos = int(data[3][0][2]) + 1    # Adjusting position (if 0-based, add 1)
         alleles = data[3][0][3].split(', ')  # Alleles
 
-        # Format the results
+        # Format the results as a list of variant strings (e.g., "chr6:160585140-A>G")
         formatted_alleles = [f"chr{chr_num}:{pos}-{a.replace('/', '>')}" for a in alleles]
         return formatted_alleles
     else:
@@ -126,19 +126,14 @@ def snp_to_vcf(snp_value):
 def draw_gene_match_table(gene_symbol, hgnc_id):
     # Check if the gene symbol and HGNC ID columns exist in the data
     if 'GENE SYMBOL' in df.columns and 'GENE ID (HGNC)' in df.columns:
-        # Filter rows matching the gene symbol and HGNC ID
         matching_rows = df[(df['GENE SYMBOL'] == gene_symbol) & (df['GENE ID (HGNC)'] == hgnc_id)]
         if not matching_rows.empty:
             selected_columns = matching_rows[['DISEASE LABEL', 'MOI', 'CLASSIFICATION', 'DISEASE ID (MONDO)']]
-            # Apply the styling function
             styled_table = selected_columns.style.apply(highlight_classification, axis=1)
-            # Display the table with scrolling
             st.dataframe(styled_table, use_container_width=True)
 
 def find_gene_match(gene_symbol, hgnc_id):
-    # Check if the gene symbol and HGNC ID columns exist in the data
     if 'GENE SYMBOL' in df.columns and 'GENE ID (HGNC)' in df.columns:
-        # Filter rows matching the gene symbol and HGNC ID
         matching_rows = df[(df['GENE SYMBOL'] == gene_symbol) & (df['GENE ID (HGNC)'] == hgnc_id)]
         if not matching_rows.empty:
             st.session_state.disease_classification_dict = dict(zip(matching_rows['DISEASE LABEL'], matching_rows['CLASSIFICATION']))
@@ -159,25 +154,21 @@ def get_color(result):
     elif result == "Benign":
         return "green"
     else:
-        return "black"  # Default color if no match
-        
+        return "black"
 
-# Function to highlight the rows based on classification with 65% transparency
 def highlight_classification(row):
     color_map = {
-        "Definitive": "color: rgba(66, 238, 66)",  # Green
-        "Disputed": "color: rgba(255, 0, 0)",        # Red 
-        "Moderate": "color: rgba(144, 238, 144)",     # Light Green 
-        "Limited": "color: rgba(255, 204, 102)",       # Orange 
+        "Definitive": "color: rgba(66, 238, 66)",
+        "Disputed": "color: rgba(255, 0, 0)",
+        "Moderate": "color: rgba(144, 238, 144)",
+        "Limited": "color: rgba(255, 204, 102)",
         "No Known Disease Relationship": "",
-        "Strong": "color: rgba(66, 238, 66)",          # Green 
-        "Refuted": "color: rgba(255, 0, 0)"            # Red 
+        "Strong": "color: rgba(66, 238, 66)",
+        "Refuted": "color: rgba(255, 0, 0)"
     }
     classification = row['CLASSIFICATION']
     return [color_map.get(classification, "")] * len(row)
 
-
-# Function to interact with Groq API for assistant responses
 def get_assistant_response_initial(user_input):
     groq_messages = [{"role": "user", "content": user_input}]
     for message in initial_messages:
@@ -193,8 +184,6 @@ def get_assistant_response_initial(user_input):
     )
     return completion.choices[0].message.content
 
-# Function to interact with Groq API for assistant responses
-# Initialize the conversation history
 SYSTEM_1 = [
     {
         "role": "system",
@@ -221,9 +210,7 @@ SYSTEM = [
     }
 ]
 
-# Function to interact with Groq API for assistant responses
 def get_assistant_response_1(user_input):
-    # Add user input to conversation history
     full_message = SYSTEM_1 + [{"role": "user", "content": user_input}]
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -234,12 +221,9 @@ def get_assistant_response_1(user_input):
         stream=False,
         stop=None,
     )
-    assistant_reply = completion.choices[0].message.content
-    return assistant_reply
+    return completion.choices[0].message.content
 
-# Function to interact with Groq API for assistant response
 def get_assistant_response(chat_history):
-    # Combine system message with full chat history
     full_conversation = SYSTEM + chat_history  
     completion = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -250,12 +234,8 @@ def get_assistant_response(chat_history):
         stream=False,
         stop=None,
     )
-    assistant_reply = completion.choices[0].message.content
-    return assistant_reply
+    return completion.choices[0].message.content
 
-###################################################
-
-# Function to parse variant information (expects CSV format with 5 parts)
 def get_variant_info(message):
     try:
         parts = message.split(',')
@@ -274,40 +254,58 @@ if "last_input" not in st.session_state:
     st.session_state.last_input = ""
     
 user_input = st.text_input("Enter a genetic variant (ex: chr6:160585140-T>G)")
+
 option_box = ""
 assistant_response = ""
+rs_only_input = False
 
-# First, check if the user input is exactly an rs value (with no extra text)
-if user_input and (user_input != st.session_state.last_input or st.session_state.rs_val_flag == True):
+if user_input and (user_input != st.session_state.last_input or st.session_state.rs_val_flag):
     st.session_state.last_input = user_input
-    if re.fullmatch(r'rs[1-9]\d*', user_input.strip(), re.IGNORECASE):
-        # If the input is exactly an rs value, simply return that
-        assistant_response = user_input.strip()
+
+    # Check if the input (after stripping whitespace) is exactly an rs value
+    if re.fullmatch(r'\s*rs[1-9]\d*\s*', user_input, re.IGNORECASE):
+        rs_only_input = True
+        snp_id = user_input.strip()
+        # Attempt conversion using snp_to_vcf:
+        alleles = snp_to_vcf(snp_id)
+        if alleles is not None and len(alleles) > 0:
+            if len(alleles) > 1:
+                st.session_state.rs_val_flag = True
+                option_box = st.selectbox("Your query results in several genomic alleles, please select one:", alleles)
+                assistant_response = convert_variant_format(option_box)
+            else:
+                st.session_state.rs_val_flag = False
+                assistant_response = convert_variant_format(alleles[0])
+        else:
+            assistant_response = snp_id
     else:
-        # Otherwise, process the input normally
+        # For any other input, call the assistant
         assistant_response = get_assistant_response_initial(user_input)
-        # If the input starts with "rs" (but is not exactly an rs value), attempt to extract the rs value and convert it
+        # If the user input begins with "rs" (but isn’t exactly an rs value) try to extract and convert:
         if user_input.lower().startswith("rs"):
             match = re.search(r'(rs[1-9]\d*)', user_input, re.IGNORECASE)
             if match:
                 snp_id = match.group(1)
                 alleles = snp_to_vcf(snp_id)
-                if alleles is None or len(alleles) == 0:
-                    st.stop()
-                if len(alleles) > 1:
-                    st.session_state.rs_val_flag = True
-                    option_box = st.selectbox("Your query results in several genomic alleles, please select one:", alleles)
-                    assistant_response = convert_variant_format(option_box)
-                else:
-                    st.session_state.rs_val_flag = False
-                    assistant_response = convert_variant_format(alleles[0])
+                if alleles is not None and len(alleles) > 0:
+                    if len(alleles) > 1:
+                        st.session_state.rs_val_flag = True
+                        option_box = st.selectbox("Your query results in several genomic alleles, please select one:", alleles)
+                        assistant_response = convert_variant_format(option_box)
+                    else:
+                        st.session_state.rs_val_flag = False
+                        assistant_response = convert_variant_format(alleles[0])
     
     st.write(f"Assistant: {assistant_response}")
-    parts = get_variant_info(assistant_response)
+    
+    # Only attempt to parse the CSV variant info if the result looks like a variant (i.e. contains commas)
+    if ',' in assistant_response:
+        parts = get_variant_info(assistant_response)
+    else:
+        parts = []
 
-    if st.session_state.flag == True and (st.session_state.rs_val_flag == False or option_box != st.session_state.selected_option):
-        st.session_state.selected_option = option_box
-        # GENEBE API
+    if st.session_state.flag and parts:
+        # Call GENEBE API using the parsed variant parts
         url = "https://api.genebe.net/cloud/api-public/v1/variant"
         params = {
             "chr": parts[0],
@@ -320,7 +318,6 @@ if user_input and (user_input != st.session_state.last_input or st.session_state
             "Accept": "application/json"
         }
         response = requests.get(url, headers=headers, params=params)
-        
         if response.status_code == 200:
             try:
                 data = response.json()
@@ -333,10 +330,10 @@ if user_input and (user_input != st.session_state.last_input or st.session_state
                 st.session_state.GeneBe_results[5] = variant.get("frequency_reference_population", "Not Available")
                 st.session_state.GeneBe_results[6] = variant.get("acmg_score", "Not Available")
                 st.session_state.GeneBe_results[7] = variant.get("acmg_criteria", "Not Available")
-            except JSONDecodeError as E:
+            except JSONDecodeError:
                 pass
-        
-        # INTERVAR API
+
+        # INTERVAR API call
         url = "http://wintervar.wglab.org/api_new.php"
         params = {
             "queryType": "position",
@@ -347,33 +344,50 @@ if user_input and (user_input != st.session_state.last_input or st.session_state
             "build": parts[4]
         }
         response = requests.get(url, params=params)
-            
         if response.status_code == 200:
             try:
                 results = response.json()
                 st.session_state.InterVar_results[0] = results.get("Intervar", "Not Available")
                 st.session_state.InterVar_results[2] = results.get("Gene", "Not Available")
-            except JSONDecodeError as E:
+            except JSONDecodeError:
                 st.session_state.InterVar_results = ['-','','-','']
-                pass
-
-        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:'+str(st.session_state.GeneBe_results[3]))
-        user_input_1 = f"The following diseases were found to be linked to the gene in interest: {st.session_state.disease_classification_dict}. Explain these diseases in depth, announce if a disease has been refuted, no need to explain that disease.if no diseases found reply with: No linked diseases found "
+        find_gene_match(st.session_state.GeneBe_results[2], 'HGNC:' + str(st.session_state.GeneBe_results[3]))
+        user_input_1 = (
+            f"The following diseases were found to be linked to the gene in interest: "
+            f"{st.session_state.disease_classification_dict}. Explain these diseases in depth, "
+            "announce if a disease has been refuted, no need to explain that disease. "
+            "If no diseases found reply with: No linked diseases found "
+        )
         st.session_state.reply = get_assistant_response_1(user_input_1)
 
-if st.session_state.flag == True:
+if st.session_state.flag and parts:
     result_color = get_color(st.session_state.GeneBe_results[0])
     st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
     data = {
         "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
-        "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2], st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5], st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
-        "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1], st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
+        "GeneBe Results": [
+            st.session_state.GeneBe_results[0],
+            st.session_state.GeneBe_results[1],
+            st.session_state.GeneBe_results[2],
+            st.session_state.GeneBe_results[3],
+            st.session_state.GeneBe_results[4],
+            st.session_state.GeneBe_results[5],
+            st.session_state.GeneBe_results[6],
+            st.session_state.GeneBe_results[7]
+        ],
+        "InterVar Results": [
+            st.session_state.InterVar_results[0],
+            st.session_state.InterVar_results[1],
+            st.session_state.InterVar_results[2],
+            st.session_state.InterVar_results[3],
+            '', '', '', ''
+        ],
     }
     acmg_results = pd.DataFrame(data)
     acmg_results.set_index("Attribute", inplace=True)
     st.dataframe(acmg_results, use_container_width=True)
     st.write("### ClinGen Gene-Disease Results")
-    draw_gene_match_table(st.session_state.GeneBe_results[2], 'HGNC:'+str(st.session_state.GeneBe_results[3]))
+    draw_gene_match_table(st.session_state.GeneBe_results[2], 'HGNC:' + str(st.session_state.GeneBe_results[3]))
     st.markdown(
         f"""
         <div class="justified-text">
