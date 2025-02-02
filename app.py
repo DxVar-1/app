@@ -53,11 +53,6 @@ initial_messages = [
     {
         "role": "system",
         "content": (
-            # Define the initial system message
-initial_messages = [
-    {
-        "role": "system",
-        "content": (
             "You are a clinician assistant chatbot specializing in genomic research and variant analysis. "
             "Your task is to interpret user-provided genetic variant data, identify possible Mendelian diseases linked to genes, "
             "and provide concise responses. If the user enters variants, you are to respond in a CSV format as such: "
@@ -77,10 +72,6 @@ initial_messages = [
             "Example: rs124234 chromosome:3, pos:13423. You reply: rs124234, since the ref base and alt base are missing. "
             "Ensure that any rs value provided is valid; it must be in the format 'rs' followed by a positive integer greater than zero. "
             "If the rs value is invalid (e.g., 'rs' or 'rs0'), do not return a random rs id; instead, ask the user to provide a valid rs value."
-        ),
-    }
-]
-
         ),
     }
 ]
