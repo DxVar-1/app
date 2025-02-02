@@ -74,6 +74,7 @@ initial_messages = [
 file_url = 'https://github.com/wah644/streamlit_app.py/blob/main/Clingen-Gene-Disease-Summary-2025-01-03.csv?raw=true'
 df = pd.read_csv(file_url)
 
+
 # ALL FUNCTIONS
 def convert_variant_format(variant: str) -> str:
     """Converts a variant from 'chr#:position-ref>alt' format to '#,position,ref,alt,hg38'."""
@@ -85,6 +86,7 @@ def convert_variant_format(variant: str) -> str:
     else:
         st.write(variant)
         raise ValueError("Invalid variant format")
+
 
 def snp_to_vcf(snp_value):
     # Validate the rs value first
@@ -158,6 +160,7 @@ def get_color(result):
         return "green"
     else:
         return "black"  # Default color if no match
+        
 
 # Function to highlight the rows based on classification with 65% transparency
 def highlight_classification(row):
@@ -172,6 +175,7 @@ def highlight_classification(row):
     }
     classification = row['CLASSIFICATION']
     return [color_map.get(classification, "")] * len(row)
+
 
 # Function to interact with Groq API for assistant responses
 def get_assistant_response_initial(user_input):
@@ -251,7 +255,7 @@ def get_assistant_response(chat_history):
 
 ###################################################
 
-# Function to parse variant information
+# Function to parse variant information (expects CSV format with 5 parts)
 def get_variant_info(message):
     try:
         parts = message.split(',')
@@ -271,28 +275,33 @@ if "last_input" not in st.session_state:
     
 user_input = st.text_input("Enter a genetic variant (ex: chr6:160585140-T>G)")
 option_box = ""
+assistant_response = ""
 
-if user_input != st.session_state.last_input or st.session_state.rs_val_flag == True:
+# First, check if the user input is exactly an rs value (with no extra text)
+if user_input and (user_input != st.session_state.last_input or st.session_state.rs_val_flag == True):
     st.session_state.last_input = user_input
-    assistant_response = get_assistant_response_initial(user_input)
+    if re.fullmatch(r'rs[1-9]\d*', user_input.strip(), re.IGNORECASE):
+        # If the input is exactly an rs value, simply return that
+        assistant_response = user_input.strip()
+    else:
+        # Otherwise, process the input normally
+        assistant_response = get_assistant_response_initial(user_input)
+        # If the input starts with "rs" (but is not exactly an rs value), attempt to extract the rs value and convert it
+        if user_input.lower().startswith("rs"):
+            match = re.search(r'(rs[1-9]\d*)', user_input, re.IGNORECASE)
+            if match:
+                snp_id = match.group(1)
+                alleles = snp_to_vcf(snp_id)
+                if alleles is None or len(alleles) == 0:
+                    st.stop()
+                if len(alleles) > 1:
+                    st.session_state.rs_val_flag = True
+                    option_box = st.selectbox("Your query results in several genomic alleles, please select one:", alleles)
+                    assistant_response = convert_variant_format(option_box)
+                else:
+                    st.session_state.rs_val_flag = False
+                    assistant_response = convert_variant_format(alleles[0])
     
-    if user_input.lower().startswith("rs"):
-        snp_id = user_input.split()[0]
-        # Validate the rs value before further processing
-        if not re.match(r'^rs[1-9]\d*$', snp_id, re.IGNORECASE):
-            st.error("Invalid rs value provided. Please enter a valid rs value (e.g., rs1234).")
-            st.stop()
-        alleles = snp_to_vcf(snp_id)
-        if alleles is None or len(alleles) == 0:
-            st.stop()
-        if len(alleles) > 1:
-            st.session_state.rs_val_flag = True
-            option_box = st.selectbox("Your query results in several genomic alleles, please select one:", alleles)
-            assistant_response = convert_variant_format(option_box)
-        else:
-            st.session_state.rs_val_flag = False
-            assistant_response = convert_variant_format(alleles[0])
-            
     st.write(f"Assistant: {assistant_response}")
     parts = get_variant_info(assistant_response)
 
@@ -356,7 +365,7 @@ if st.session_state.flag == True:
     result_color = get_color(st.session_state.GeneBe_results[0])
     st.markdown(f"### ACMG Results: <span style='color:{result_color}'>{st.session_state.GeneBe_results[0]}</span>", unsafe_allow_html=True)
     data = {
-        "Attribute": ["Classification", "Effect", "Gene", "HGNC ID","dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
+        "Attribute": ["Classification", "Effect", "Gene", "HGNC ID", "dbsnp", "freq. ref. pop.", "acmg score", "acmg criteria"],
         "GeneBe Results": [st.session_state.GeneBe_results[0], st.session_state.GeneBe_results[1], st.session_state.GeneBe_results[2], st.session_state.GeneBe_results[3], st.session_state.GeneBe_results[4], st.session_state.GeneBe_results[5], st.session_state.GeneBe_results[6], st.session_state.GeneBe_results[7]],
         "InterVar Results": [st.session_state.InterVar_results[0], st.session_state.InterVar_results[1], st.session_state.InterVar_results[2], st.session_state.InterVar_results[3], '', '', '', ''],
     }
