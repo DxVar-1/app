@@ -11,7 +11,7 @@ formatted_alleles = []
 # Set page configuration
 st.set_page_config(page_title="DxVar", layout="centered")
 
-logo_url = "https://raw.githubusercontent.com/dxvar-1/app/main/logo.png"
+logo_url = "https://raw.githubusercontent.com/DxVar-1/app/blob/main/dxvarlogo.png"
 
 st.markdown("""
     <style>
