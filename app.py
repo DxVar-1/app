@@ -29,10 +29,6 @@ logo_url = "https://raw.githubusercontent.com/dxvar-1/app/main/logo.png"
 # Display the logo. Adjust the width as needed.
 st.image(logo_url, width=200)
 
-# Display the logo in the center
-col1, col2, col3 = st.columns([1, 2, 1])
-with col2:
-    st.image(logo_url, width=200)
 
 # Initialize Groq API client
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
