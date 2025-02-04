@@ -13,26 +13,21 @@ st.set_page_config(page_title="DxVar", layout="centered")
 
 logo_url = "https://raw.githubusercontent.com/dxvar-1/app/main/logo.png"
 
-st.markdown(
-    """
+st.markdown("""
     <style>
-    .container {
-        display: flex;
-        justify-content: center;
-    }
-    .logo {
-        width: 500px;  
-    }
+        .justified-text {
+            text-align: justify;
+        }
+        .results-table {
+            margin-left: auto;
+            margin-right: auto;
+        }
     </style>
-    <div class="container">
-        <img class="logo" src="{logo_url}">
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
 
-st.image(logo_url, width=200)
+
+st.image(logo_url, width=400)
 
 
 # Initialize Groq API client
