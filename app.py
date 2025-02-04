@@ -27,7 +27,7 @@ st.markdown("""
 
 
 
-st.image(logo_url, width=200)
+st.image(logo_url, width=300)
 
 
 # Initialize Groq API client
