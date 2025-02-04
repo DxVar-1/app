@@ -24,7 +24,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # URL to your logo image. Replace this with your actual logo URL or local file path.
-logo_url = "https://your-domain.com/path/to/logo.png"
+logo_url = "https://github.com/DxVar-1/app/blob/main/logo.png"
 
 # Display the logo. Adjust the width as needed.
 st.image(logo_url, width=200)
