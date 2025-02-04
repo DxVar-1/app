@@ -23,7 +23,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("DxVar")
+# URL to your logo image. Replace this with your actual logo URL or local file path.
+logo_url = "https://your-domain.com/path/to/logo.png"
+
+# Display the logo. Adjust the width as needed.
+st.image(logo_url, width=200)
 
 # Initialize Groq API client
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
