@@ -25,9 +25,9 @@ st.markdown(
     }
     </style>
     <div class="container">
-        <img class="logo" src="{}">
+        <img class="logo" src="{logo_url}">
     </div>
-    """.format(logo_url),
+    """,
     unsafe_allow_html=True
 )
 
