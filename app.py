@@ -21,7 +21,7 @@ st.markdown(
         justify-content: center;
     }
     .logo {
-        width: 300px;  
+        width: 500px;  
     }
     </style>
     <div class="container">
