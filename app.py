@@ -11,22 +11,26 @@ formatted_alleles = []
 # Set page configuration
 st.set_page_config(page_title="DxVar", layout="centered")
 
-st.markdown("""
+st.markdown(
+    """
     <style>
-        .justified-text {
-            text-align: justify;
-        }
-        .results-table {
-            margin-left: auto;
-            margin-right: auto;
-        }
+    .container {
+        display: flex;
+        justify-content: center;
+    }
+    .logo {
+        width: 300px;  
+    }
     </style>
-""", unsafe_allow_html=True)
+    <div class="container">
+        <img class="logo" src="{}">
+    </div>
+    """.format(logo_url),
+    unsafe_allow_html=True
+)
 
-# URL to your logo image. Replace this with your actual logo URL or local file path.
 logo_url = "https://raw.githubusercontent.com/dxvar-1/app/main/logo.png"
 
-# Display the logo. Adjust the width as needed.
 st.image(logo_url, width=200)
 
 
