@@ -1,2 +1,0 @@
-TRACKING_URI=""
-EXP_NAME_MIL=""
