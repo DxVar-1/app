@@ -1,15 +1,30 @@
-name: Build Docker Image
+name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
+      # 1) Check out your repository code
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      # 2) Log in to DockerHub
+      - name: Log in to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_ACCESS_TOKEN }}
+
+      # 3) Build the Docker image
       - name: Build Docker image
-        run: docker build -t 3asc-image .
+        run: docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/3asc-image:latest .
+
+      # 4) Push Docker image to DockerHub
+      - name: Push Docker image
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/3asc-image:latest
