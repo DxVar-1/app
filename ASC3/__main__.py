@@ -33,10 +33,15 @@ def get_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    # get model name from CLI
+  
+    # If you have a CLI argument parser, you can still use that.
     ARGS = get_args()
-    # record model name as env var
-    os.environ["MODEL_NAME"] = ARGS.model_name
+
+    # Override the port with the one provided by Heroku if it exists
+    port = int(os.environ.get("PORT", ARGS.port))
+    
+    # Optionally, print which port is being used for debugging
+    print(f"Starting server on port {port}")
 
     CONFIG = OmegaConf.load(os.path.join(ASC_DIR, "config.yaml"))
     uvicorn.run(
